@@ -1,0 +1,157 @@
+###############################################################################
+## Copyright (C), 2016-2017, Allwinner Tech. Co., Ltd.
+## file     : Makefile.param  $(TOP_DIR)
+## brief    : for all project Makefile param control
+## author   : wangguixing
+## versoion : V0.1 create
+## date     : 2018.04.14
+###############################################################################
+
+##################################################
+#
+# Define important directories path
+#
+##################################################
+#export TOP_DIR        := $(dir $(word $(words $(MAKEFILE_LIST)) , $(MAKEFILE_LIST)))
+export SCRIPTS_DIR      = $(TOP_DIR)/scripts/
+export TOP_MK_PARAM     = $(TOP_DIR)/Makefile.param
+export TOP_INC_DIR      = $(TOP_DIR)/include
+export TOP_REL_DIR      = $(TOP_DIR)/release
+
+
+##################################################
+#
+# Define Platform information. This make sure 
+# CROSS_COMPILE and other INFO CONFIG. e.g.
+#
+##################################################
+export CHIP_TYPE        := 
+export BOARD            := 
+export DEBUG_FLAG       := Y
+export STRIP_FLAG       := Y
+export BUILD_DATE_TIME  ?= $(shell date +%Y%m%d-%H%M%S)
+
+
+##################################################
+#
+# Define Sample Compile option
+# COMPILE_MODE: COMPILE_LIB_STATIC or COMPILE_LIB_SHARE
+#
+##################################################
+export COMPILE_MODE     := COMPILE_LIB_SHARE
+export CROSS_COMPILE    := $(CROSS_COMPILER)-
+
+
+##################################################
+#
+# Setup build C/CPP FLAG
+#
+##################################################
+export CC       = $(CROSS_COMPILE)gcc
+export CXX      = $(CROSS_COMPILE)g++
+export AR       = $(CROSS_COMPILE)ar
+export STRIP    = $(CROSS_COMPILE)strip
+
+INC_FLAGS += -I$(TOP_DIR)/include/
+INC_FLAGS += -I$(TOP_DIR)/src/
+
+LD_FLAG   += -L$(TOP_DIR)/lib
+LD_FLAG   += -lpthread
+#LD_FLAG   += -Wl,--allow-shlib-undefined
+
+
+###### Static lib #######
+ifeq ($(COMPILE_MODE), COMPILE_LIB_STATIC)
+###### Share lib #######
+else
+endif
+
+#DEF_FLAGS += -D$(CHIP_TYPE) -D$(BOARD)
+CFLAGS    += -Wall -Wno-unused-but-set-variable -Wno-unused-variable -std=gnu99
+CXXFlAGS  += -Wall -Wno-unused-but-set-variable -fpermissive -std=c++11
+
+ifeq ($(DEBUG_FLAG), Y)
+export DEBUG_FLAG = Y
+CFLAGS    += -g
+CXXFlAGS  += -g
+DEF_FLAGS += -DINFO_DEBUG -DERR_DEBUG
+#export STRIP_FLAG = N
+else
+export DEBUG_FLAG = N
+#export STRIP_FLAG = Y
+endif
+
+export CFLAGS    += $(INC_FLAGS) $(DEF_FLAGS) $(LD_FLAG)
+export CXXFlAGS  += $(INC_FLAGS) $(DEF_FLAGS) $(LD_FLAG)
+export AR_FLAGS   = -rc
+
+
+##################################################
+#
+# Define important command
+#
+##################################################
+export ECHO 	= /bin/echo
+export RM		= /bin/rm -rf
+export CP		= /bin/cp -rf
+export LN		= /bin/ln
+export MKDIR	= /bin/mkdir
+export PRINTF	= /usr/bin/printf
+export EXIT		= exit
+export CD		= cd
+export SOURCE 	= source
+export CHMOD	= /bin/chmod
+# Just for bash .... you can you up!
+export PUSHD	= pushd >/dev/null
+export POPD		= popd  >/dev/null
+
+##################################################
+#
+# Build rule 
+#
+##################################################
+export ENV_CLEAR         := $(SCRIPTS_DIR)/env_clear.mk
+export BUILD_BIN         := $(SCRIPTS_DIR)/build_bin.mk
+export BUILD_CPP_BIN     := $(SCRIPTS_DIR)/build_cpp_bin.mk
+export BUILD_STATIC_LIB  := $(SCRIPTS_DIR)/build_lib.mk
+export BUILD_SHARED_LIB  := $(SCRIPTS_DIR)/build_so.mk
+
+
+##################################################
+#
+# Make function 
+#
+##################################################
+make_subdir =                                               \
+        @if [ -e $(1) -a -d $(1) ]; then                    \
+        $(CD) $(1); $(MAKE) all; $(CD) -;                   \
+        else                                                \
+        $(ECHO) "***Error: Folder $(1) not exist";          \
+        exit -1;                                            \
+        fi
+
+make_clean_subdir =                                         \
+        @if [ -e $(1) -a -d $(1) ]; then                    \
+        $(CD) $(1); $(MAKE) clean; $(CD) -;                 \
+        else                                                \
+        $(ECHO) "Warning: Folder $(1) not exist";           \
+        fi
+
+
+make_all_subdir =                                           \
+        @for dir in $(1);                                   \
+        do                                                  \
+        if [ -d $$dir ]; then                               \
+        $(CD) $$dir; $(MAKE) all; $(CD) -;                  \
+        fi;                                                 \
+        done
+
+
+make_clean_all_subdir =                                     \
+        @for dir in $(1);                                   \
+        do                                                  \
+        if [ -d $$dir ]; then                               \
+        $(CD) $$dir; $(MAKE) clean; $(CD) -;                \
+        fi;                                                 \
+        done
+
