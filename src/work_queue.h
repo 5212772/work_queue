@@ -77,6 +77,7 @@ typedef enum tag_WORK_QUEUE_STATUS_E
     WQ_RUNNING,
     WQ_IDLE,
     WQ_STOP,
+    WQ_EXIT,
     WQ_STATUS_BOTTON,
 } WORK_QUEUE_STATUS_E;
 

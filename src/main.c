@@ -48,9 +48,28 @@
 /************************************************************************************************/
 int main(int argc, char *agrv[])
 {
-    int ret = 0;
+    int ret = 0, cnt = 0;
+    int wq_id[MAX_WORK_QUEUE_NUM] = {0};
 
     WQ_INFO("Do test work queue! ret:%d\n", ret);
+
+    create_work_queue(500, &wq_id[0]);
+
+    sleep(5);
+
+    create_work_queue(500, &wq_id[1]);
+
+    WQ_INFO(" aaaaaaaaaaaaaaaaaaaaaaaaaa! ret:%d\n", ret);
+
+    destroy_work_queue(wq_id[0]);
+
+    WQ_INFO(" bbbbbbbbbbbbbbbbbbbbbbbbbb! ret:%d\n", ret);
+
+    sleep(2);
+
+    destroy_work_queue(wq_id[1]);
+
+    WQ_INFO(" cccccccccccccccccccccccccc! ret:%d\n", ret);
 
     return 0;
 }
