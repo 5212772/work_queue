@@ -21,7 +21,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <pthread.h>
-#include <sys/prctl.h>  
+#include <sys/prctl.h>
 
 #include "work_queue.h"
 
@@ -116,6 +116,38 @@ static int get_valid_wq_id(int *wq_id)
     }
 }
 
+static int get_valid_task_id(int wq_id, int *task_id)
+{
+    int id = 0;
+    P_WORK_TASK_S p_task = NULL;
+
+    if (wq_id >= MAX_WORK_QUEUE_NUM) {
+        WQ_ERR("Input wq_id error! wq_id:%d  MAX_ID:%d\n", wq_id, MAX_WORK_QUEUE_NUM);
+        return -1;
+    }
+
+    if (WQ_UNINIT == g_wq_array[wq_id].status || -1 == g_wq_array[wq_id].group_id) {
+        WQ_ERR("The wq_id:%d work_queue don't init! \n", wq_id);
+        return -1;
+    }
+
+    id = 0;
+    p_task = g_wq_array[wq_id].task_head;
+    while(1) {
+        if (NULL == p_task)
+            break;
+        if (p_task.task_id > id)
+            id = p_task.task_id;
+    }
+    id++;
+
+    if (task_id)
+        *task_id = id;
+
+    return id;
+}
+
+
 static int check_wq_id(int wq_id)
 {
     if (wq_id >= MAX_WORK_QUEUE_NUM) {
@@ -144,8 +176,8 @@ static int check_wq_id(int wq_id)
 static void * work_queue_manager(void *para)
 {
     int  ret = 0;
-    
-    prctl(PR_SET_NAME, "work_queue_manager", 0, 0, 0);
+
+    prctl(PR_SET_NAME, "WQ_manager", 0, 0, 0);
 
     while (g_manage_run_flag) {
 
@@ -168,38 +200,37 @@ static void * work_queue_proccess(void *para)
         return NULL;
     }
 
-    WQ_INFO("  ======2222 proccess id:%d === guixing === \n", wq_id); usleep(200 *10);
-
     wq_id = *(int*)para;
+    if (wq_id >= MAX_WORK_QUEUE_NUM) {
+        WQ_ERR("Input wq_id:%d error!!!\n", wq_id);
+        return NULL;
+    }
 
-    //TODO: check wq_id
-    
-    snprintf(name, 63, "WQ_proccess_ID_%d", wq_id);
-
-    prctl(PR_SET_NAME, "work_queue_proccess", 0, 0, 0);
+    snprintf(name, 63, "WQ_proc_ID_%d", wq_id);
+    prctl(PR_SET_NAME, name, 0, 0, 0);
+    WQ_INFO(" The %s proccess have create.\n", name);
 
     while (1) {
         /* This part is run control function */
         usleep(g_wq_array[wq_id].unit_time * 1000);  /* 50ms */
-        if (WQ_EXIT == g_wq_array[wq_id].run_flag) {
+
+        pthread_mutex_lock(&g_wq_array[wq_id].operate_lock);
+        if (WQ_EXIT == g_wq_array[wq_id].run_flag || WQ_UNINIT == g_wq_array[wq_id].run_flag) {
             WQ_INFO(" The ID:%d work_queue proccess exit! \n", wq_id);
+            pthread_mutex_unlock(&g_wq_array[wq_id].operate_lock);
             break;
         } else if (WQ_STOP == g_wq_array[wq_id].run_flag) {
+            pthread_mutex_unlock(&g_wq_array[wq_id].operate_lock);
             continue;
         }
 
-        switch (g_wq_array[wq_id].run_flag)
-        {
-            case WQ_EXIT:
-                break;
+        //TODO samething!
+        WQ_INFO("  ... ID:%d proccess ... \n", wq_id); usleep(200 * 1000);
 
-            default:
-                break;
-        }
-
-
-        WQ_INFO("  ======ID:%d proccess === guixing === \n", wq_id); sleep(2);
+        pthread_mutex_unlock(&g_wq_array[wq_id].operate_lock);
     }
+
+    //WQ_INFO("  ======ID:%d proccess === guixing === Bybte ! \n", wq_id); usleep(200 * 1000);
 
     return NULL;
 }
@@ -220,9 +251,9 @@ int init_work_queue(void)
     memset(g_wq_array, 0, sizeof(WORK_QUEUE_S) * MAX_WORK_QUEUE_NUM);
     for (idx = 0; idx < MAX_WORK_QUEUE_NUM; idx++) {
         g_wq_array[idx].group_id = -1;
-
+        g_wq_array[idx].run_flag = WQ_UNINIT;
+        g_wq_array[idx].status   = WQ_UNINIT;
         pthread_mutex_init(&g_wq_array[idx].operate_lock, NULL);
-        g_wq_array[idx].status = WQ_UNINIT;
         #if 0
         if (sem_init(&g_wq_array[idx].sem, 0, 0) == -1) {
             WQ_ERR("Do sem_init fail! errno:%d %s \n", errno, perror(errno));
@@ -257,10 +288,11 @@ int exit_work_queue(void)
     memset(g_wq_array,   0, sizeof(WORK_QUEUE_S) * MAX_WORK_QUEUE_NUM);
     for (idx = 0; idx < MAX_WORK_QUEUE_NUM; idx++) {
         g_wq_array[idx].group_id = -1;
-        g_wq_array[idx].status = WQ_UNINIT;
+        g_wq_array[idx].status   = WQ_UNINIT;
+        g_wq_array[idx].run_flag = WQ_UNINIT;
     }
 
-    WQ_INFO("All of work queue haved destroy. so, exit work queue and destroy manager thread.");
+    WQ_INFO("All of work queue haved destroy. So exit work queue and destroy manager thread.\n");
     //pthread_join(g_manage_thread_id, NULL);
 
     return 0;
@@ -269,7 +301,7 @@ int exit_work_queue(void)
 
 /**
  * @brief For display work queue info
- * @param 
+ * @param
  * - poll_time  work queue basic poll time. unit: ms.
  * - wq_id      work queue ID number. Can be NULL.
  * @return
@@ -328,7 +360,7 @@ int create_work_queue(int poll_time, int *wq_id)
     }
     usleep(10);
     #endif
-    
+
     g_wq_array[id].run_flag = WQ_RUNNING;
     g_wq_array[id].status   = WQ_IDLE;
 
@@ -355,12 +387,11 @@ int destroy_work_queue(int wq_id)
         return -1;
     }
 
-    //TODO: lock wq_mux
-
     g_wq_array[wq_id].run_flag = WQ_EXIT;
 
     #if 1
     pthread_join(g_wq_array[wq_id].thread_id, NULL);
+    WQ_INFO("  Join the wq_id:%d exit. And destroy wq!\n", wq_id);
     #else
     ret = sem_wait(&g_wq_array[wq_id].sem);
     if (ret) {
@@ -379,8 +410,7 @@ int destroy_work_queue(int wq_id)
     g_wq_array[wq_id].task_current = NULL;
     g_wq_array[wq_id].next_wq      = NULL;
     g_wq_array[wq_id].status       = WQ_UNINIT;
-
-    //TODO: unLock wq_mux
+    g_wq_array[wq_id].run_flag     = WQ_UNINIT;
 
     for (cnt = 0; cnt < MAX_WORK_QUEUE_NUM; cnt++) {
         if (-1 != g_wq_array[cnt].group_id || WQ_UNINIT != g_wq_array[cnt].status)
@@ -402,7 +432,7 @@ int start_work_queue(int wq_id)
 {
     int ret = 0;
 
-   if (wq_id >= MAX_WORK_QUEUE_NUM) {
+    if (wq_id >= MAX_WORK_QUEUE_NUM) {
         WQ_ERR("Input wq_id error! wq_id:%d  MAX_ID:%d\n", wq_id, MAX_WORK_QUEUE_NUM);
         return -1;
     }
@@ -418,9 +448,13 @@ int start_work_queue(int wq_id)
         return -1;
     }
 
+    pthread_mutex_lock(&g_operate_lock);
     g_wq_array[wq_id].run_flag = WQ_RUNNING;
+    pthread_mutex_unlock(&g_operate_lock);
 
     pthread_mutex_unlock(&g_wq_array[wq_id].operate_lock);
+
+    WQ_INFO("ssssss wq_id:%d \n", wq_id);
     return 0;
 }
 
@@ -429,7 +463,7 @@ int stop_work_queue(int wq_id)
 {
     int ret = 0;
 
-   if (wq_id >= MAX_WORK_QUEUE_NUM) {
+    if (wq_id >= MAX_WORK_QUEUE_NUM) {
         WQ_ERR("Input wq_id error! wq_id:%d  MAX_ID:%d\n", wq_id, MAX_WORK_QUEUE_NUM);
         return -1;
     }
@@ -445,9 +479,326 @@ int stop_work_queue(int wq_id)
         return -1;
     }
 
+    pthread_mutex_lock(&g_operate_lock);
     g_wq_array[wq_id].run_flag = WQ_STOP;
+    pthread_mutex_unlock(&g_operate_lock);
+
+    pthread_mutex_unlock(&g_wq_array[wq_id].operate_lock);
+
+    WQ_INFO("*** wq_id:%d \n", wq_id);
+
+    return 0;
+}
+
+
+int set_work_queue_poll_time(int wq_id, int poll_time)
+{
+    int ret = 0;
+
+    if (wq_id >= MAX_WORK_QUEUE_NUM) {
+        WQ_ERR("Input wq_id error! wq_id:%d  MAX_ID:%d\n", wq_id, MAX_WORK_QUEUE_NUM);
+        return -1;
+    }
+
+    if (poll_time < 20 || poll_time > 1000) {
+        WQ_ERR("Input poll_time:%d outof limite[20ms < pool < 1000ms], so fix poll_time = 50ms \n", poll_time);
+        poll_time = 50;
+        ret = -1;
+    }
+    g_wq_array[wq_id].unit_time = poll_time;
+
+    return ret;
+}
+
+int get_work_queue_status(int wq_id, WORK_QUEUE_STATUS_E * status)
+{
+    if (wq_id >= MAX_WORK_QUEUE_NUM) {
+        WQ_ERR("Input wq_id error! wq_id:%d  MAX_ID:%d\n", wq_id, MAX_WORK_QUEUE_NUM);
+        return -1;
+    }
+
+    if (NULL == status) {
+        WQ_ERR("Input status is NULL!\n");
+        return -1;
+    }
+
+    *status = g_wq_array[wq_id].status;
+    return 0;
+}
+
+int get_all_work_queue_number(int * wq_number)
+{
+    int cnt = 0, idx = 0, i = 0;
+    P_WORK_QUEUE_S p_wq = NULL;
+
+    if (NULL == wq_number) {
+        WQ_ERR("Input wq_number is NULL!\n");
+        return -1;
+    }
+
+    pthread_mutex_lock(&g_operate_lock);
+    for (idx = 0; idx < MAX_WORK_QUEUE_NUM; idx++) {
+        if (g_wq_array[idx].group_id >= 0 && WQ_UNINIT != g_wq_array[idx].status) {
+            cnt++;
+            #if 0
+            p_wq = g_wq_array[idx].next_wq;
+            for (;;) {
+                if (NULL != p_wq) {
+                    if (p_wq->group_id > 0 && WQ_UNINIT != p_wq->status)
+                        cnt++;
+                    p_wq = p_wq->next_wq;
+                } else {
+                    break;
+                }
+            }
+            #endif
+        }
+    }
+    *wq_number = cnt;
+    pthread_mutex_unlock(&g_operate_lock);
+
+    WQ_INFO("^^^^^ Current wq number:%d  \n", cnt);
+
+    return 0;
+}
+
+
+int get_all_work_queue_id(int id_array[MAX_WORK_QUEUE_NUM], int * wq_number)
+{
+    int cnt = 0, idx = 0, i = 0;
+    P_WORK_QUEUE_S p_wq = NULL;
+
+    if (NULL == id_array || NULL == wq_number) {
+        WQ_ERR("Input id_array or wq_number is NULL!\n");
+        return -1;
+    }
+
+    pthread_mutex_lock(&g_operate_lock);
+    for (idx = 0; idx < MAX_WORK_QUEUE_NUM; idx++) {
+        if (g_wq_array[idx].group_id >= 0 && WQ_UNINIT != g_wq_array[idx].status) {
+            id_array[i] = g_wq_array[idx].group_id;
+            i++;
+            cnt++;
+            #if 0
+            p_wq = g_wq_array[idx].next_wq;
+            for (;;) {
+                if (NULL != p_wq) {
+                    if (p_wq->group_id > 0 && WQ_UNINIT != p_wq->status)
+                        cnt++;
+                    p_wq = p_wq->next_wq;
+                } else {
+                    break;
+                }
+            }
+            #endif
+        }
+    }
+    *wq_number = cnt;
+    pthread_mutex_unlock(&g_operate_lock);
+
+    for (i = 0; i < cnt; i++)
+        WQ_INFO("^^^^^ Current %d:wq_group_ID[%d]  \n", cnt, id_array[i]);
+
+    return 0;
+}
+
+
+int get_all_task_number(int wq_id, int * task_number)
+{
+    int cnt = 0;
+    P_WORK_TASK_S p_task = NULL;
+
+    if (NULL == task_number) {
+        WQ_ERR("Input task_number is NULL!\n");
+        return -1;
+    }
+
+    if (wq_id >= MAX_WORK_QUEUE_NUM) {
+        WQ_ERR("Input wq_id error! wq_id:%d  MAX_ID:%d\n", wq_id, MAX_WORK_QUEUE_NUM);
+        return -1;
+    }
+
+    if(pthread_mutex_lock(&g_wq_array[wq_id].operate_lock) != 0) {
+        WQ_ERR("The id:%d work_queue don't init! \n", wq_id);
+        return -1;
+    }
+
+    if (WQ_UNINIT == g_wq_array[wq_id].status || g_wq_array[wq_id].group_id < 0) {
+        WQ_ERR("The id:%d work_queue don't init! \n", wq_id);
+        pthread_mutex_unlock(&g_wq_array[wq_id].operate_lock);
+        return -1;
+    }
+
+    cnt    = 0;
+    p_task = g_wq_array[wq_id].task_head;
+    while (1) {
+        if (NULL == p_task) {
+            break;
+        }
+        cnt++;
+        p_task = p_task->next_task;
+    }
+    *task_number = cnt;
+    pthread_mutex_unlock(&g_wq_array[wq_id].operate_lock);
+
+    WQ_INFO("The wq_id_%d  have [%d] task\n", wq_id, cnt);
+
+    return 0;
+}
+
+
+/**
+ * @brief add task to work_queue
+ * @param
+ * - wq_id        work queue ID number.
+ * - task_name    the task name.  Can be NULL
+ * - mode         the task work mode. e.g once, loop...
+ * - loop_time    the task loop time.
+ *                mode==once: time is invalid.
+ *                mode==loop: task running loop time
+ *                mode==once_delay: is delay time.
+ * - handler      task handle function. Can't be NULL!
+ * - param        task handler function input param.  Can be NULL.
+ * - data         task handler function input or output param. Can be NULL
+ * - task_id      if success, return task_id. If fail return NULL. Can be NULL
+ * @return
+ *  - task_id  >=0 (success)
+ *  - fail    -1
+ */
+int add_task(int wq_id, char *task_name, TASK_WORK_MODE_E mode, int loop_time,
+             task_func handler, void *param, void *data, int *task_id)
+{
+    int ret = 0, t_id = 0;
+    P_WORK_TASK_S p_task = NULL, p_task_tmp = NULL;
+
+    if (wq_id >= MAX_WORK_QUEUE_NUM) {
+        WQ_ERR("Input wq_id error! wq_id:%d  MAX_ID:%d\n", wq_id, MAX_WORK_QUEUE_NUM);
+        return -1;
+    }
+
+    if (mode >= TASK_MODE_BOTTON) {
+        WQ_ERR("Input mode:%d error!\n", mode);
+        return -1;
+    }
+
+    if (NULL == handler) {
+        WQ_ERR("Input handler is NULL! wq_id:%d\n", wq_id);
+        return -1;
+    }
+
+    if(pthread_mutex_lock(&g_wq_array[wq_id].operate_lock) != 0) {
+        WQ_ERR("The wq_id:%d work_queue don't init! \n", wq_id);
+        return -1;
+    }
+
+    if (WQ_UNINIT == g_wq_array[wq_id].status || -1 == g_wq_array[wq_id].group_id) {
+        WQ_ERR("The wq_id:%d work_queue don't init! \n", wq_id);
+        goto TASK_ERR_EXIT;
+    }
+
+    p_task = malloc(sizeof(WORK_TASK_S));
+    if (NULL == p_task) {
+        WQ_ERR("Do wq_id:%d malloc WORK_TASK_S struct fail!  error:%s\n", wq_id, strerror(errno));
+        goto TASK_ERR_EXIT;
+    }
+    memset(p_task, 0, sizeof(WORK_TASK_S));
+
+    typedef struct tag_WORK_TASK_S {
+        char                task_name[128];
+        int                 task_id;
+        TASK_WORK_MODE_E    work_mode;
+        long                loop_time;         /* This task execution cycle.  Unit:ms */
+        task_func           handler;           /* work_queue task handle function  */
+        void               *param;             /* task function input param     */
+        void               *data;              /* task function I/O data        */
+
+        long                next_start_time;   /* The next task start time.   Unit:ms */
+        long                run_time;          /* last run time.              Unit:ms */
+        long                max_run_time;      /* The Most task run time.     Unit:ms */
+        long                average_run_time;  /* This task average run time. Unit:ms */
+        unsigned int        run_number;        /* This task total run numbers   */
+        TASK_STATUS_E       status;
+
+        struct tag_WORK_TASK_S  *next_task;
+        struct tag_WORK_TASK_S  *prev_task;
+    } WORK_TASK_S, *P_WORK_TASK_S;
+
+    ret = get_valid_task_id(wq_id, &t_id);
+    if (ret < 0) {
+        WQ_ERR("Do get_valid_task_id faill! wq_id:%d  ret:%d\n", wq_id, ret);
+        goto TASK_ERR_EXIT;
+    }
+
+    if (NULL == task_name) {
+        strncpy(p_task->task_name, task_name, sizeof(p_task->task_name) - 2);
+    }
+
+    p_task->task_id     = t_id;
+    p_task->work_mode   = mode;
+    p_task->loop_time   = loop_time;
+    p_task->handler     = handler;
+    p_task->param       = param;
+    p_task->data        = data;
+    p_task->next_start_time = 0;  ////////////
+    p_task->status      = TASK_IDLE;
+
+    if (NULL == g_wq_array[wq_id].task_head) {
+        g_wq_array[wq_id].task_head = p_task;
+    } else {
+        p_task_tmp = g_wq_array[wq_id].task_head;
+        while(1) {
+            if(NULL != p_task_tmp->next_task) {
+                p_task_tmp = p_task_tmp->next_task;
+            } else {
+                p_task_tmp->next_task = p_task;
+                p_task->prev_task     = p_task_tmp->next_task;
+            }
+        }
+    }
 
     pthread_mutex_unlock(&g_wq_array[wq_id].operate_lock);
     return 0;
+
+TASK_ERR_EXIT:
+    pthread_mutex_unlock(&g_wq_array[wq_id].operate_lock);
+    return -1;
 }
+
+
+int delete_task(int wq_id, int task_id)
+{
+    int ret = 0;
+
+    if (wq_id >= MAX_WORK_QUEUE_NUM) {
+        WQ_ERR("Input wq_id error! wq_id:%d  MAX_ID:%d\n", wq_id, MAX_WORK_QUEUE_NUM);
+        return -1;
+    }
+
+    if(pthread_mutex_lock(&g_wq_array[wq_id].operate_lock) != 0) {
+        WQ_ERR("The id:%d work_queue don't init! \n", wq_id);
+        return -1;
+    }
+
+    if (WQ_UNINIT == g_wq_array[wq_id].status || -1 == g_wq_array[wq_id].group_id) {
+        WQ_ERR("The id:%d work_queue don't init! \n", wq_id);
+        pthread_mutex_unlock(&g_wq_array[wq_id].operate_lock);
+        return -1;
+    }
+
+    pthread_mutex_lock(&g_operate_lock);
+    g_wq_array[wq_id].run_flag = WQ_RUNNING;
+    pthread_mutex_unlock(&g_operate_lock);
+
+    pthread_mutex_unlock(&g_wq_array[wq_id].operate_lock);
+
+    WQ_INFO("ssssss wq_id:%d \n", wq_id);
+    return 0;
+}
+
+
+int start_task(int wq_id, int task_id);
+int stop_task(int wq_id, int task_id);
+int get_task_looptime(int wq_id, int task_id, int *loop_time);
+int set_task_looptime(int wq_id, int task_id, int loop_time);
+int get_task_status(int wq_id, int task_id, TASK_STATUS_E *status);
 

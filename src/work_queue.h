@@ -93,9 +93,9 @@ typedef enum tag_TASK_WORK_MODE_E
 
 typedef enum tag_TASK_STATUS_E
 {
-    TASK_RUNNING = 0,
     TASK_IDLE = 0,
-    TASK_STOP = 0,
+    TASK_RUNNING,
+    TASK_STOP,
     TASK_STATUS_BOTTON,
 } TASK_STATUS_E;
 
@@ -125,7 +125,7 @@ extern "C" {
 
 /**
  * @brief For display work queue info
- * @param 
+ * @param
  * - poll_time  work queue basic poll time. unit: ms.
  * - wq_id      work queue ID number. Can be NULL.
  * @return
@@ -140,13 +140,13 @@ int stop_work_queue(int wq_id);
 int set_work_queue_poll_time(int wq_id, int poll_time);
 int get_work_queue_status(int wq_id, WORK_QUEUE_STATUS_E * status);
 int get_all_work_queue_number(int * wq_number);
-int get_all_work_queue_id(int id_array[MAX_WORK_QUEUE_NUM], int * wq_numer);
+int get_all_work_queue_id(int id_array[MAX_WORK_QUEUE_NUM], int * wq_number);
 int get_all_task_number(int wq_id, int * task_number);
 
 
 /**
  * 此处主要声明的是启/停工作队列宏函数。
- * 即 start_work_queue_2 和 stop_work_queue_2 
+ * 即 start_work_queue_2 和 stop_work_queue_2
  * 此处主要声明的是启/停工作队列宏函数。这样定义的好处是知道整个系统
  * 运行过程中是哪个函数进行了工作队列的启停，方便后续调试跟踪。
  * 但这个两个函数的调用也不是必须是用的，根据实际情况使用即可。
@@ -166,14 +166,14 @@ int _stop_work_queue(int wq_id);
 
 /**
  * @brief add task to work_queue
- * @param 
+ * @param
  * - wq_id        work queue ID number.
  * - task_name    the task name.  Can be NULL
  * - mode         the task work mode. e.g once, loop...
- * - loop_time    the task loop time.  
- *                mode==once: time is invalid. 
+ * - loop_time    the task loop time.
+ *                mode==once: time is invalid.
  *                mode==loop: task running loop time
- *                mode==once_delay: is delay time. 
+ *                mode==once_delay: is delay time.
  * - handler      task handle function. Can't be NULL!
  * - param        task handler function input param.  Can be NULL.
  * - data         task handler function input or output param. Can be NULL
@@ -182,7 +182,7 @@ int _stop_work_queue(int wq_id);
  *  - task_id  >=0 (success)
  *  - fail    -1
  */
-int add_task(int wq_id, char *task_name, TASK_WORK_MODE_E mode, int loop_time, 
+int add_task(int wq_id, char *task_name, TASK_WORK_MODE_E mode, int loop_time,
              task_func handler, void *param, void *data, int *task_id);
 int delete_task(int wq_id, int task_id);
 int start_task(int wq_id, int task_id);
@@ -194,7 +194,7 @@ int get_task_status(int wq_id, int task_id, TASK_STATUS_E *status);
 
 /**
  * @brief For display work queue info
- * @param 
+ * @param
  * - wq_id   work queue ID number.
  * - times   Display work queue running status info times
  * @return
