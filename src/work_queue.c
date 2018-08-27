@@ -47,7 +47,8 @@ typedef struct tag_WORK_TASK_S {
     long                run_time;          /* last run time.              Unit:ms */
     long                max_run_time;      /* The Most task run time.     Unit:ms */
     long                average_run_time;  /* This task average run time. Unit:ms */
-    unsigned int        run_number;        /* This task total run numbers   */
+    long                run_number;        /* This task total run numbers   */
+    TASK_STATUS_E       run_flag;          /* Task control flag. only RUNNING and STOP is valid */
     TASK_STATUS_E       status;
 
     struct tag_WORK_TASK_S  *next_task;
@@ -136,8 +137,10 @@ static int get_valid_task_id(int wq_id, int *task_id)
     while(1) {
         if (NULL == p_task)
             break;
-        if (p_task.task_id > id)
-            id = p_task.task_id;
+
+        if (p_task->task_id > id)
+            id = p_task->task_id;
+        p_task = p_task->next_task;
     }
     id++;
 
@@ -181,7 +184,7 @@ static void * work_queue_manager(void *para)
 
     while (g_manage_run_flag) {
 
-        WQ_INFO("  ============= guixing === \n"); sleep(3);
+        //WQ_INFO("  ============= guixing === \n"); sleep(3);
         usleep(50 * 1000);  /* 50ms */
     }
 
@@ -214,6 +217,10 @@ static void * work_queue_proccess(void *para)
         /* This part is run control function */
         usleep(g_wq_array[wq_id].unit_time * 1000);  /* 50ms */
 
+
+
+        usleep(300 * 1000);
+
         pthread_mutex_lock(&g_wq_array[wq_id].operate_lock);
         if (WQ_EXIT == g_wq_array[wq_id].run_flag || WQ_UNINIT == g_wq_array[wq_id].run_flag) {
             WQ_INFO(" The ID:%d work_queue proccess exit! \n", wq_id);
@@ -225,7 +232,7 @@ static void * work_queue_proccess(void *para)
         }
 
         //TODO samething!
-        WQ_INFO("  ... ID:%d proccess ... \n", wq_id); usleep(200 * 1000);
+        WQ_INFO("  ... ID:%d proccess ... \n", wq_id); usleep(800 * 1000);
 
         pthread_mutex_unlock(&g_wq_array[wq_id].operate_lock);
     }
@@ -378,6 +385,8 @@ int destroy_work_queue(int wq_id)
 {
     int ret = 0, cnt = 0;
     int exit_flag = 0;
+    P_WORK_TASK_S p_task = NULL, p_next = NULL;
+
     pthread_mutex_lock(&g_operate_lock);
 
     ret = check_wq_id(wq_id);
@@ -399,7 +408,19 @@ int destroy_work_queue(int wq_id)
     }
     #endif
 
-    /* TODO: release task */
+    /* release all task */
+    p_task = g_wq_array[wq_id].task_head;
+    while (1) {
+        if (NULL == p_task) {
+            break;
+        }
+        p_next = p_task->next_task;
+        p_task->run_flag = TASK_STOP;
+        WQ_ERR("Free wq_id:%d  task_ID:%d\n", wq_id, p_task->task_id);
+        free(p_task);
+        p_task = NULL;
+        p_task = p_next;
+    }
     g_wq_array[wq_id].group_id     = -1;
     g_wq_array[wq_id].task_num     = 0;
     g_wq_array[wq_id].cur_time     = 0;
@@ -693,54 +714,35 @@ int add_task(int wq_id, char *task_name, TASK_WORK_MODE_E mode, int loop_time,
 
     if (WQ_UNINIT == g_wq_array[wq_id].status || -1 == g_wq_array[wq_id].group_id) {
         WQ_ERR("The wq_id:%d work_queue don't init! \n", wq_id);
-        goto TASK_ERR_EXIT;
+        goto TASK_ADD_EXIT;
     }
 
     p_task = malloc(sizeof(WORK_TASK_S));
     if (NULL == p_task) {
         WQ_ERR("Do wq_id:%d malloc WORK_TASK_S struct fail!  error:%s\n", wq_id, strerror(errno));
-        goto TASK_ERR_EXIT;
+        goto TASK_ADD_EXIT;
     }
     memset(p_task, 0, sizeof(WORK_TASK_S));
-
-    typedef struct tag_WORK_TASK_S {
-        char                task_name[128];
-        int                 task_id;
-        TASK_WORK_MODE_E    work_mode;
-        long                loop_time;         /* This task execution cycle.  Unit:ms */
-        task_func           handler;           /* work_queue task handle function  */
-        void               *param;             /* task function input param     */
-        void               *data;              /* task function I/O data        */
-
-        long                next_start_time;   /* The next task start time.   Unit:ms */
-        long                run_time;          /* last run time.              Unit:ms */
-        long                max_run_time;      /* The Most task run time.     Unit:ms */
-        long                average_run_time;  /* This task average run time. Unit:ms */
-        unsigned int        run_number;        /* This task total run numbers   */
-        TASK_STATUS_E       status;
-
-        struct tag_WORK_TASK_S  *next_task;
-        struct tag_WORK_TASK_S  *prev_task;
-    } WORK_TASK_S, *P_WORK_TASK_S;
 
     ret = get_valid_task_id(wq_id, &t_id);
     if (ret < 0) {
         WQ_ERR("Do get_valid_task_id faill! wq_id:%d  ret:%d\n", wq_id, ret);
-        goto TASK_ERR_EXIT;
+        goto TASK_ADD_EXIT;
     }
 
-    if (NULL == task_name) {
+    if (NULL != task_name) {
         strncpy(p_task->task_name, task_name, sizeof(p_task->task_name) - 2);
     }
-
     p_task->task_id     = t_id;
     p_task->work_mode   = mode;
     p_task->loop_time   = loop_time;
     p_task->handler     = handler;
     p_task->param       = param;
     p_task->data        = data;
-    p_task->next_start_time = 0;  ////////////
+    p_task->run_flag    = TASK_RUNNING;
     p_task->status      = TASK_IDLE;
+    p_task->prev_task   = NULL;
+    p_task->next_task   = NULL;
 
     if (NULL == g_wq_array[wq_id].task_head) {
         g_wq_array[wq_id].task_head = p_task;
@@ -750,16 +752,33 @@ int add_task(int wq_id, char *task_name, TASK_WORK_MODE_E mode, int loop_time,
             if(NULL != p_task_tmp->next_task) {
                 p_task_tmp = p_task_tmp->next_task;
             } else {
+                p_task->prev_task     = p_task_tmp;
                 p_task_tmp->next_task = p_task;
-                p_task->prev_task     = p_task_tmp->next_task;
+                break;
             }
         }
     }
 
-    pthread_mutex_unlock(&g_wq_array[wq_id].operate_lock);
-    return 0;
+    switch (mode) {
+        case TASK_MODE_LOOP:
+        case TASK_MODE_ONCE:
+        default:
+            p_task->next_start_time = 0;
+            break;
 
-TASK_ERR_EXIT:
+        case TASK_MODE_ONCE_DELAY:
+            p_task->next_start_time = loop_time;
+            break;
+    }
+
+    if (NULL != task_id) {
+        *task_id = p_task->task_id;
+    }
+
+    pthread_mutex_unlock(&g_wq_array[wq_id].operate_lock);
+    return p_task->task_id;
+
+TASK_ADD_EXIT:
     pthread_mutex_unlock(&g_wq_array[wq_id].operate_lock);
     return -1;
 }
@@ -767,7 +786,82 @@ TASK_ERR_EXIT:
 
 int delete_task(int wq_id, int task_id)
 {
+    int ret = 0, success = 0;
+    P_WORK_TASK_S p_task = NULL, p_task_tmp = NULL;
+
+    if (wq_id >= MAX_WORK_QUEUE_NUM) {
+        WQ_ERR("Input wq_id error! wq_id:%d  MAX_ID:%d\n", wq_id, MAX_WORK_QUEUE_NUM);
+        return -1;
+    }
+
+    if (pthread_mutex_lock(&g_wq_array[wq_id].operate_lock) != 0) {
+        WQ_ERR("The wq_id:%d work_queue don't init! \n", wq_id);
+        return -1;
+    }
+
+    if (WQ_UNINIT == g_wq_array[wq_id].status || -1 == g_wq_array[wq_id].group_id) {
+        WQ_ERR("The wq_id:%d work_queue don't init! \n", wq_id);
+        goto TASK_DEL_EXIT;
+    }
+
+    success = 0;
+    p_task = g_wq_array[wq_id].task_head;
+    while (1) {
+        if (NULL == p_task) {
+            goto TASK_DEL_EXIT;
+        }
+
+        if (task_id == p_task->task_id) {
+            if (NULL == p_task->prev_task && NULL == p_task->next_task) {
+                g_wq_array[wq_id].task_head = NULL;
+            } else if (NULL == p_task->prev_task) {
+                /* The p_task is Head */
+                g_wq_array[wq_id].task_head = p_task->next_task;
+                p_task->next_task->prev_task = NULL;
+            } else if (NULL == p_task->next_task) {
+                /* The p_task is tail */
+                p_task->prev_task->next_task = NULL;
+            }else {
+                p_task->prev_task->next_task = p_task->next_task;
+                p_task->next_task->prev_task = p_task->prev_task;
+            }
+            break;
+        }
+        p_task = p_task->next_task;
+    }
+    p_task->run_flag = TASK_STOP;
+    free(p_task);
+    p_task = NULL;
+
+    pthread_mutex_unlock(&g_wq_array[wq_id].operate_lock);
+    return 0;
+
+TASK_DEL_EXIT:
+    pthread_mutex_unlock(&g_wq_array[wq_id].operate_lock);
+    return -1;
+}
+
+
+int start_task(int wq_id, int task_id);
+int stop_task(int wq_id, int task_id);
+int get_task_looptime(int wq_id, int task_id, int *loop_time);
+int set_task_looptime(int wq_id, int task_id, int loop_time);
+int get_task_status(int wq_id, int task_id, TASK_STATUS_E *status);
+
+
+/**
+ * @brief For display work queue info
+ * @param
+ * - wq_id   work queue ID number.
+ * - times   Display work queue running status info times
+ * @return
+ *  - success  0
+ *  - fail    -1
+ */
+int display_work_queue_info(int wq_id, int display_times)
+{
     int ret = 0;
+    P_WORK_TASK_S p_task = NULL, p_task_tmp = NULL;
 
     if (wq_id >= MAX_WORK_QUEUE_NUM) {
         WQ_ERR("Input wq_id error! wq_id:%d  MAX_ID:%d\n", wq_id, MAX_WORK_QUEUE_NUM);
@@ -785,20 +879,34 @@ int delete_task(int wq_id, int task_id)
         return -1;
     }
 
+    printf("\n*************************************************\n");
+    printf("Work queue ID[%d] info\n", wq_id);
     pthread_mutex_lock(&g_operate_lock);
-    g_wq_array[wq_id].run_flag = WQ_RUNNING;
+    p_task = g_wq_array[wq_id].task_head;
+    while (1) {
+
+        if(NULL == p_task) {
+            break;
+        }
+        printf("task ID_%d\n", p_task->task_id);
+        printf("\t\t name:      %s\n",   p_task->task_name);
+        printf("\t\t work_mode: %d\n",   p_task->work_mode);
+        printf("\t\t loop_time: %ld\n",  p_task->loop_time);
+        printf("\t\t next_time: %ld\n",   p_task->next_start_time);
+        printf("\t\t run_time:  %ld\n",   p_task->run_time);
+        printf("\t\t max_time:  %ld\n",   p_task->max_run_time);
+        printf("\t\t average_time:%ld\n", p_task->average_run_time);
+        printf("\t\t run_number:%ld\n",   p_task->run_number);
+        printf("\t\t run_flag:  %d\n",   p_task->run_flag);
+        printf("\t\t status:    %d\n",   p_task->status);
+
+        p_task = p_task->next_task;
+    }
     pthread_mutex_unlock(&g_operate_lock);
+    printf("*************************************************\n\n");
 
     pthread_mutex_unlock(&g_wq_array[wq_id].operate_lock);
 
-    WQ_INFO("ssssss wq_id:%d \n", wq_id);
     return 0;
 }
-
-
-int start_task(int wq_id, int task_id);
-int stop_task(int wq_id, int task_id);
-int get_task_looptime(int wq_id, int task_id, int *loop_time);
-int set_task_looptime(int wq_id, int task_id, int loop_time);
-int get_task_status(int wq_id, int task_id, TASK_STATUS_E *status);
 
